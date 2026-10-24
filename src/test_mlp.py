@@ -49,18 +49,17 @@ def main():
     origins = pd.DatetimeIndex([max(date, TEST_START) for date in week_starts])
     if not (pd.Timestamp(metadata["training_sample_end"]) < origins.min()):
         raise ValueError("The model was fitted after the first forecast origin.")
-    # Mean(y7, y14, y21, y28) = y7 - (delta14 + delta21 + delta28) / 4.
-    four_week_mean = (features["previous_same_weekday_sessions"]
-                      - features[FEATURE_NAMES[-3:]].sum(axis=1) / 4)
+    four_week_mean = features["same_weekday_mean4"]
     results = pd.DataFrame({
         "date": dates, "weekday": dates.day_name(), "forecast_origin": origins,
         "actual_sessions": actual.astype(int), "predicted_sessions": predicted,
         "error_prediction_minus_actual": predicted - actual,
-        "previous_week_baseline": features["previous_same_weekday_sessions"].to_numpy(),
+        "previous_week_baseline": features["lag7_sessions"].to_numpy(),
         "four_week_mean_baseline": four_week_mean.to_numpy(),
     })
-    for name in FEATURE_NAMES[-4:]:
+    for name in FEATURE_NAMES[9:]:
         results[name] = features[name].to_numpy()
+    mlp_scores = regression_metrics(actual, predicted)
     report = {
         "test_start": str(TEST_START.date()), "test_end": str(TEST_END.date()),
         "test_samples": len(dates), "forecast_batches": int(len(origins.unique())),
@@ -70,7 +69,9 @@ def main():
         "negative_prediction_count": int((predicted < 0).sum()),
         "training_start": metadata["training_period_start"],
         "training_samples": metadata["training_samples"],
-        "mlp": regression_metrics(actual, predicted),
+        "mlp": mlp_scores,
+        "target_r2": 0.6,
+        "r2_target_met": mlp_scores["r2"] >= 0.6,
         "previous_week_baseline": regression_metrics(actual, results.previous_week_baseline),
         "four_week_mean_baseline": regression_metrics(actual, results.four_week_mean_baseline),
         "model_path": str(args.model.resolve()),

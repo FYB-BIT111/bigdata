@@ -8,24 +8,29 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pandas.tseries.holiday import USFederalHolidayCalendar
 import torch
 from torch import nn
 
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = ROOT / "data/clean/hamilton_daily_summary.csv"
-RESULT_DIR = ROOT / "outputs/mlp_fixed_2016_2018"
+RESULT_DIR = ROOT / "outputs/mlp_scheme_a_20_features"
 TRAIN_START = pd.Timestamp("2016-01-01")
 TRAIN_END = pd.Timestamp("2018-12-31")
 TEST_START = pd.Timestamp("2019-01-01")
 TEST_END = pd.Timestamp("2019-12-31")
 LAG_DAYS = (7, 14, 21, 28)
+TRAIN_SAMPLE_START = pd.offsets.Week(weekday=0).rollforward(
+    TRAIN_START + pd.Timedelta(days=max(LAG_DAYS)))
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 FEATURE_NAMES = ["day_of_year_sin", "day_of_year_cos"] + [
     "weekday_" + name for name in WEEKDAYS
-] + ["previous_same_weekday_sessions", "lag7_minus_lag14",
-     "lag7_minus_lag21", "lag7_minus_lag28"]
-MODEL_CONFIG = {"input_size": 13, "width": 16, "blocks": 1, "dropout": 0.1}
+] + ["is_major_holiday", "is_other_federal_holiday", "is_major_holiday_eve",
+     "is_major_holiday_following", "is_year_end_period",
+     "lag7_sessions", "same_weekday_mean4", "same_weekday_std4",
+     "previous_week_daily_mean", "weekly_mean_change", "previous_week_minus_mean28"]
+MODEL_CONFIG = {"input_size": 20, "width": 16, "blocks": 1, "dropout": 0.1}
 
 
 def load_daily(path, end):
@@ -57,22 +62,45 @@ def build_features(sessions, dates):
     lags = np.column_stack(lags)
     if not np.isfinite(lags).all():
         raise ValueError("A required historical count is missing.")
+    # Complete Monday-Sunday weeks; shared by every target in the forecast week.
+    previous_days = np.column_stack([
+        sessions.reindex(origins - pd.Timedelta(days=offset)).to_numpy(dtype=float)
+        for offset in range(1, 29)
+    ])
+    if not np.isfinite(previous_days).all():
+        raise ValueError("A count in the previous four complete weeks is missing.")
+    previous_week_mean = previous_days[:, :7].mean(axis=1)
+    earlier_week_mean = previous_days[:, 7:14].mean(axis=1)
+    federal = USFederalHolidayCalendar().holidays(
+        str(dates.min().year - 1) + "-01-01",
+        str(dates.max().year + 1) + "-12-31", return_name=True)
+    major_names = {"New Year's Day", "Independence Day", "Thanksgiving Day", "Christmas Day"}
+    major = set(federal.loc[federal.isin(major_names)].index)
+    for year in range(dates.min().year - 1, dates.max().year + 2):
+        major.update(pd.to_datetime([str(year) + suffix for suffix in ("-01-01", "-07-04", "-12-25")]))
+        major.add(pd.Timestamp(str(year) + "-01-01") + pd.offsets.Easter())
+    other = set(federal.index) - major
+    eve = {day - pd.Timedelta(days=1) for day in major}
+    following = {day + pd.Timedelta(days=1) for day in major}
     angle = 2 * np.pi * (dates.dayofyear.to_numpy() - 1) / np.where(dates.is_leap_year, 366, 365)
     matrix = np.column_stack([
         np.sin(angle), np.cos(angle), np.eye(7)[dates.dayofweek],
-        lags[:, 0], lags[:, 0] - lags[:, 1],
-        lags[:, 0] - lags[:, 2], lags[:, 0] - lags[:, 3],
+        dates.isin(major), dates.isin(other), dates.isin(eve), dates.isin(following),
+        ((dates.month == 12) & (dates.day >= 24)) | ((dates.month == 1) & (dates.day == 1)),
+        lags[:, 0], lags.mean(axis=1), lags.std(axis=1),
+        previous_week_mean, previous_week_mean - earlier_week_mean,
+        previous_week_mean - previous_days.mean(axis=1),
     ])
     return pd.DataFrame(matrix, index=dates, columns=FEATURE_NAMES)
 
 
 def fit_scaler(features):
-    """Standardize the four history features using only the fitting subset."""
+    """Standardize the six history features using only the fitting subset."""
     values = np.asarray(features, dtype=float)
     mean = np.zeros(len(FEATURE_NAMES))
     scale = np.ones(len(FEATURE_NAMES))
-    mean[-4:] = values[:, -4:].mean(axis=0)
-    scale[-4:] = values[:, -4:].std(axis=0)
+    mean[-6:] = values[:, -6:].mean(axis=0)
+    scale[-6:] = values[:, -6:].std(axis=0)
     scale[scale == 0] = 1.0
     return mean, scale
 
@@ -93,7 +121,7 @@ class ResidualBlock(nn.Module):
 
 
 class ResidualMLP(nn.Module):
-    def __init__(self, input_size=13, width=16, blocks=1, dropout=0.1):
+    def __init__(self, input_size=20, width=16, blocks=1, dropout=0.1):
         super().__init__()
         self.input_layer = nn.Sequential(nn.Linear(input_size, width), nn.ReLU())
         self.blocks = nn.Sequential(*[ResidualBlock(width, dropout) for _ in range(blocks)])

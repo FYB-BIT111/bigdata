@@ -116,7 +116,7 @@ def main():
     year2018 = dates.year == 2018
     report = {
         "architecture": model_config, "feature_names": FEATURE_NAMES,
-        "feature_definition": "Year-day sin/cos (2), weekday one-hot (7), holiday indicators (5), lag7 count, same-weekday mean/std over lags 7/14/21/28 (population std), previous complete week mean, difference from preceding complete week mean, difference from preceding four complete weeks mean",
+        "feature_definition": "Month sin/cos with angle 2*pi*(month-1)/12 (2), weekday one-hot (7), holiday indicators (5), lag7 count, same-weekday mean/std over lags 7/14/21/28 (population std), previous complete week mean, difference from preceding complete week mean, difference from preceding four complete weeks mean",
         "holiday_definition": "Major: actual and observed New Year, Independence Day, Thanksgiving, Christmas plus Easter Sunday (not federal); other federal holidays; major-holiday eve and following day; December 24-January 1 inclusive",
         "data_augmentation": False, "optimizer": "Adam", "loss": "MSE",
         "learning_rate": args.learning_rate, "batch_size": args.batch_size, "seed": args.seed,

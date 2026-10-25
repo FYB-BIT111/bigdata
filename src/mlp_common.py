@@ -15,7 +15,7 @@ from torch import nn
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_PATH = ROOT / "data/clean/hamilton_daily_summary.csv"
-RESULT_DIR = ROOT / "outputs/mlp_scheme_a_20_features"
+RESULT_DIR = ROOT / "outputs/mlp_month_cyclic_20_features"
 TRAIN_START = pd.Timestamp("2016-01-01")
 TRAIN_END = pd.Timestamp("2018-12-31")
 TEST_START = pd.Timestamp("2019-01-01")
@@ -24,7 +24,7 @@ LAG_DAYS = (7, 14, 21, 28)
 TRAIN_SAMPLE_START = pd.offsets.Week(weekday=0).rollforward(
     TRAIN_START + pd.Timedelta(days=max(LAG_DAYS)))
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-FEATURE_NAMES = ["day_of_year_sin", "day_of_year_cos"] + [
+FEATURE_NAMES = ["month_sin", "month_cos"] + [
     "weekday_" + name for name in WEEKDAYS
 ] + ["is_major_holiday", "is_other_federal_holiday", "is_major_holiday_eve",
      "is_major_holiday_following", "is_year_end_period",
@@ -82,7 +82,7 @@ def build_features(sessions, dates):
     other = set(federal.index) - major
     eve = {day - pd.Timedelta(days=1) for day in major}
     following = {day + pd.Timedelta(days=1) for day in major}
-    angle = 2 * np.pi * (dates.dayofyear.to_numpy() - 1) / np.where(dates.is_leap_year, 366, 365)
+    angle = 2 * np.pi * (dates.month.to_numpy() - 1) / 12
     matrix = np.column_stack([
         np.sin(angle), np.cos(angle), np.eye(7)[dates.dayofweek],
         dates.isin(major), dates.isin(other), dates.isin(eve), dates.isin(following),
